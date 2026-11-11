@@ -109,15 +109,25 @@ jobs:
           set -euo pipefail
           out=.pr-review
           mkdir -p "$out/files"
-          git archive pr-head | tar -x -C "$out/files"
+          # A temporary index, not `git archive`, so the PR's own
+          # .gitattributes (export-ignore, export-subst) can't hide or rewrite
+          # files.
+          GIT_INDEX_FILE="$RUNNER_TEMP/pr-index" git read-tree pr-head
+          GIT_INDEX_FILE="$RUNNER_TEMP/pr-index" git checkout-index -a --prefix="$out/files/"
           find "$out/files" -type l -delete
           find "$out/files" \( -name .claude -o -name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md -o -name .mcp.json -o -name pr-review.md \) -prune -exec rm -rf {} +
           gh pr view "$PR" -R "$REPO" --json title,body,author,baseRefName,headRefName,commits \
             --jq '"# \(.title)\n\nAuthor: \(.author.login) · \(.headRefName) → \(.baseRefName)\n\n\(.body)\n\n## Commits\n" + ([.commits[] | "- \(.oid[0:7]) \(.messageHeadline)"] | join("\n"))' > "$out/pr.md"
-          gh pr diff "$PR" -R "$REPO" > "$out/pr.diff"
+          # The file list comes from the API, which pages. The diff endpoint
+          # refuses very large PRs (HTTP 406); the review then works from
+          # files/ and files.txt.
+          gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' > "$out/files.txt"
+          if ! gh pr diff "$PR" -R "$REPO" > "$out/pr.diff" 2>/dev/null; then
+            echo "The diff is too large for GitHub to return. The changed files are listed in files.txt; read them in files/." > "$out/pr.diff"
+          fi
           if [ "$MODE" = incremental ]; then
-            gh pr diff "$PR" -R "$REPO" --name-only > "$out/files.txt"
-            git diff "$PRIOR" pr-head -- $(cat "$out/files.txt") > "$out/changes.diff"
+            mapfile -t changed < "$out/files.txt"
+            git diff "$PRIOR" pr-head -- "${changed[@]/#/:(literal)}" > "$out/changes.diff"
           fi
           ls -la "$out"
 
@@ -138,7 +148,8 @@ jobs:
 
             Everything you need is in `.pr-review/`, read with Read, Grep and Glob:
             - `pr.md`: title, description and commits
-            - `pr.diff`: the whole PR diff
+            - `pr.diff`: the whole PR diff (a note instead, if GitHub can't return one that large)
+            - `files.txt`: the changed files
             - `files/`: the PR's version of the repository
             The rest of the workspace is the base branch, for comparison. If it has
             `pr-review.md` or `.github/pr-review.md`, read that first: it says what matters
