@@ -17,7 +17,7 @@ An adversarial review that finds bugs, tries to disprove each one, and posts wha
 survives as one PR review. It runs when a PR opens and on each push (reviewing only
 new commits), and on any PR, forks included, when the owner or a collaborator comments
 `/claude-review`. How it works is at the top of
-[pr-review.yml](.github/workflows/pr-review.yml).
+[reusable-claude-review.yml](.github/workflows/reusable-claude-review.yml).
 
 To turn it on in a repo:
 

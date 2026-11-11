@@ -6,7 +6,7 @@ already catches.
 
 ## Where bugs hide here
 
-- **The review workflow is security-sensitive.** `pr-review.yml` runs Claude on
+- **The review workflow is security-sensitive.** `reusable-claude-review.yml` runs Claude on
   untrusted PR text, forks included. The model job must keep a read-only token
   and only Read, Grep and Glob; only the model-free `publish` job may write. PR
   code must never be checked out as the workspace or run, and nothing from the
