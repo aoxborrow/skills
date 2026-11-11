@@ -3,7 +3,7 @@
   "owner": { "name": "Aaron Oxborrow" },
   "plugins": [
     {
-      "name": "aoxborrow-skills",
+      "name": "skills",
       "source": "./",
       "description": "Aaron Oxborrow's Claude Code skills."
     }

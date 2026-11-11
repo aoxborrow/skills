@@ -8,7 +8,7 @@ Skills live in `skills/<name>/SKILL.md`. Install them in Claude Code:
 
 ```
 /plugin marketplace add aoxborrow/skills
-/plugin install aoxborrow-skills@aoxborrow
+/plugin install skills@aoxborrow
 ```
 
 ## Claude PR review
@@ -16,16 +16,16 @@ Skills live in `skills/<name>/SKILL.md`. Install them in Claude Code:
 An adversarial review that finds bugs, tries to disprove each one, and posts what
 survives as one PR review. It runs when a PR opens and on each push (reviewing only
 new commits), and on any PR, forks included, when the owner or a collaborator comments
-`/claude-review`. Details are at the top of
-[the workflow](.github/workflows/claude-review.yml).
+`/claude-review`. How it works is at the top of
+[pr-review.yml](.github/workflows/pr-review.yml).
 
 To turn it on in a repo:
 
-1. Copy [examples/claude-review.yml](examples/claude-review.yml) to
-   `.github/workflows/claude-review.yml`.
+1. Copy [claude-review.yml](.github/workflows/claude-review.yml) to the repo's
+   `.github/workflows/`.
 2. Set the repository variables `ANTHROPIC_FEDERATION_RULE_ID`,
    `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID` and
    `ANTHROPIC_WORKSPACE_ID`, from an Anthropic workload identity federation rule
    that trusts GitHub Actions for `pull_request` and `issue_comment` runs.
-3. Optionally add `pr-review.md` with what matters most in that project; see
-   [examples/pr-review.md](examples/pr-review.md).
+3. Optionally add `.github/pr-review.md` saying what matters most in that project,
+   like [this repo's](.github/pr-review.md).
