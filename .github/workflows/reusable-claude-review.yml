@@ -65,9 +65,16 @@ jobs:
           ref: ${{ steps.base.outputs.sha }}
           persist-credentials: false
 
+      # Private repos need auth to fetch. The token goes in through env-only
+      # git config for this step, never into .git/config where Claude could
+      # read it.
       - name: Fetch the PR head as data
         id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           git fetch --depth=50 origin "pull/$PR/head:pr-head"
           echo "head=$(git rev-parse pr-head)" >> "$GITHUB_OUTPUT"
 
@@ -81,6 +88,8 @@ jobs:
           EVENT: ${{ github.event_name }}
           HEAD: ${{ steps.pr.outputs.head }}
         run: |
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           prior=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
             --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- claude-review -->"))) | .commit_id' | tail -n1)
           mode=full
