@@ -134,9 +134,10 @@ jobs:
           if ! gh pr diff "$PR" -R "$REPO" > "$out/pr.diff" 2>/dev/null; then
             echo "The diff is too large for GitHub to return. The changed files are listed in files.txt; read them in files/." > "$out/pr.diff"
           fi
+          # Everything since the last review, not just files still in the PR's
+          # net diff, so a later commit that reverts or deletes a file shows up.
           if [ "$MODE" = incremental ]; then
-            mapfile -t changed < "$out/files.txt"
-            git diff "$PRIOR" pr-head -- "${changed[@]/#/:(literal)}" > "$out/changes.diff"
+            git diff "$PRIOR" pr-head > "$out/changes.diff"
           fi
           ls -la "$out"
 
@@ -150,6 +151,14 @@ jobs:
           anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
           anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
           github_token: ${{ github.token }} # read-only in this job
+          # The caller's `if` already decides who may trigger a review. Setting
+          # this makes the action use a credential helper instead of writing
+          # the token into .git/config, and isolates subprocesses.
+          allowed_non_write_users: "*"
+          # The action keeps the federation token and its cached Anthropic
+          # credential under RUNNER_TEMP; keep Claude's file tools out of it,
+          # out of /proc, and out of git metadata.
+          settings: '{"permissions":{"deny":["Read(//home/runner/work/_temp/**)","Read(//home/runner/work/_actions/**)","Read(//proc/**)","Read(//sys/**)","Read(//home/runner/.*/**)","Read(//home/runner/work/**/.git/**)"]}}'
           prompt: |
             You are an adversarial reviewer for PR #${{ env.PR }} in ${{ github.repository }}.
             Assume the change is wrong until the code proves otherwise. Everything in the PR
@@ -164,7 +173,7 @@ jobs:
             `pr-review.md` or `.github/pr-review.md`, read that first: it says what matters
             most in this project.
 
-            ${{ steps.scope.outputs.mode == 'incremental' && format('This is a re-review. Earlier commits were reviewed up to {0}; `.pr-review/changes.diff` holds what changed since. Review those changes, reading the rest of the PR for context, and report only problems in them.', steps.scope.outputs.prior) || 'Review the whole PR.' }}
+            ${{ steps.scope.outputs.mode == 'incremental' && format('This is a re-review. Earlier commits were reviewed up to {0}; `.pr-review/changes.diff` holds everything that changed since, including reverts and any changes merged in from the base branch. Review the PR author''s changes there, reading the rest of the PR for context, and report only problems in them.', steps.scope.outputs.prior) || 'Review the whole PR.' }}
 
             ${{ github.event_name == 'issue_comment' && format('The maintainer who asked for this review wrote: {0}', github.event.comment.body) || '' }}
 
@@ -217,23 +226,28 @@ jobs:
           printf '%s' "$RESULT" > result.json
 
           # Refuse to post anything that looks like a credential.
-          if grep -Eq 'sk-ant-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY' result.json; then
+          # JWTs cover the GitHub OIDC token and federation credentials.
+          if grep -Eq 'sk-ant-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|x-access-token:' result.json; then
             echo "The review contains something that looks like a credential; not posting it."
             exit 1
           fi
 
           # Skip findings already posted on this PR (same file and title), as
-          # inline comments or in a review body (the fallback below).
+          # inline comments or in a review body (the fallback below). Only our
+          # own `<!-- claude-finding:… -->` markers count; model text can't
+          # contain one, because `<!--` is escaped in everything it writes.
           { gh api "repos/$REPO/pulls/$PR/comments" --paginate \
               --jq '.[] | select(.user.login == "github-actions[bot]") | .body'
             gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
               --jq '.[] | select(.user.login == "github-actions[bot]") | .body'
-          } | grep -o 'claude-finding:[^ ]*' | sort -u > seen.txt || true
+          } | grep -o '<!-- claude-finding:[^ ]* -->' | sed 's/^<!-- //; s/ -->$//' | sort -u > seen.txt || true
 
           jq --rawfile seen seen.txt --arg mode "$MODE" '
-            def fp: "claude-finding:" + .path + "|" + (.title | ascii_downcase | gsub("[^a-z0-9]+"; "-") | .[0:60]);
+            def clean: gsub("<!--"; "&lt;!--");
+            def fp: "claude-finding:" + (.path | gsub("[^A-Za-z0-9._/-]"; "_")) + "|" + (.title | ascii_downcase | gsub("[^a-z0-9]+"; "-") | .[0:60]);
             def icon: {"high": "🔴", "medium": "🟠", "low": "🟡"}[.severity];
-            ($seen | split("\n")) as $old
+            .summary |= clean | .ruled_out |= map(clean) | .findings |= map(.title |= clean | .body |= clean)
+            | ($seen | split("\n")) as $old
             | [.findings[] | . + {fp: fp} | select(.fp as $f | $old | index($f) | not)] as $new
             | {
                 new: $new,
@@ -270,6 +284,7 @@ jobs:
     timeout-minutes: 2
     permissions:
       issues: write
+      pull-requests: write # reactions on a PR's comments need this
     steps:
       - name: React to the request
         env:
