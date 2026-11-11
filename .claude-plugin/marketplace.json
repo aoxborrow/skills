@@ -1,0 +1,11 @@
+{
+  "name": "aoxborrow",
+  "owner": { "name": "Aaron Oxborrow" },
+  "plugins": [
+    {
+      "name": "aoxborrow-skills",
+      "source": "./",
+      "description": "Aaron Oxborrow's Claude Code skills."
+    }
+  ]
+}
