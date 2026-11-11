@@ -11,6 +11,11 @@ already catches.
   read-only token and only Read, Grep and Glob; only the model-free `publish`
   job may write. PR code must never be checked out as the workspace or run, and
   nothing from the PR may reach a `run:` script through `${{ }}`.
+- **Credentials stay out of the model's reach.** The federation token and its
+  cached credential live under `RUNNER_TEMP`; the `settings` deny rules keep
+  Claude's file tools out of it, `/proc` and `.git`, and `publish` refuses
+  anything credential-shaped. Check that new steps don't write secrets where
+  Claude can read them.
 - **Every repo calls `reusable-claude-review.yml@main`.** A change here reaches
   all of them at once, so check that existing callers (`claude-review.yml`)
   still work.
