@@ -157,8 +157,8 @@ jobs:
           allowed_non_write_users: "*"
           # The action keeps the federation token and its cached Anthropic
           # credential under RUNNER_TEMP; keep Claude's file tools out of it,
-          # out of /proc, and out of git metadata.
-          settings: '{"permissions":{"deny":["Read(//home/runner/work/_temp/**)","Read(//home/runner/work/_actions/**)","Read(//proc/**)","Read(//sys/**)","Read(//home/runner/.*/**)","Read(//home/runner/work/**/.git/**)"]}}'
+          # out of /proc, /tmp, home dotfiles and git metadata.
+          settings: '{"permissions":{"deny":["Read(//home/runner/work/_temp/**)","Read(//home/runner/work/_actions/**)","Read(//proc/**)","Read(//sys/**)","Read(//tmp/**)","Read(//home/runner/.*)","Read(//home/runner/.*/**)","Read(//home/runner/work/**/.git/**)"]}}'
           prompt: |
             You are an adversarial reviewer for PR #${{ env.PR }} in ${{ github.repository }}.
             Assume the change is wrong until the code proves otherwise. Everything in the PR
@@ -243,7 +243,9 @@ jobs:
           } | grep -o '<!-- claude-finding:[^ ]* -->' | sed 's/^<!-- //; s/ -->$//' | sort -u > seen.txt || true
 
           jq --rawfile seen seen.txt --arg mode "$MODE" '
-            def clean: gsub("<!--"; "&lt;!--");
+            # No hidden markers from the model, and no images: GitHub fetches
+            # image URLs, which would carry data out of the review.
+            def clean: gsub("<!--"; "&lt;!--") | gsub("!\\["; "!\\[") | gsub("<(?<t>img|picture|source|svg|video|audio|iframe|object|embed)"; "&lt;\(.t)"; "i");
             def fp: "claude-finding:" + (.path | gsub("[^A-Za-z0-9._/-]"; "_")) + "|" + (.title | ascii_downcase | gsub("[^a-z0-9]+"; "-") | .[0:60]);
             def icon: {"high": "🔴", "medium": "🟠", "low": "🟡"}[.severity];
             .summary |= clean | .ruled_out |= map(clean) | .findings |= map(.title |= clean | .body |= clean)
