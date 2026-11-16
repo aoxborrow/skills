@@ -14,7 +14,8 @@ Skills live in `skills/<name>/SKILL.md`. Install them in Claude Code:
 ## Claude PR review
 
 An adversarial review that finds bugs, tries to disprove each one, and posts what
-survives as one PR review. It runs when a PR opens and on each push (reviewing only
+survives as one PR review. A push review with nothing new to report posts nothing; a
+`claude-review` commit status records that the commit was reviewed. It runs when a PR opens and on each push (reviewing only
 new commits), and on any PR, forks included, when the owner or a collaborator comments
 `/claude-review`. How it works is at the top of
 [reusable-claude-review.yml](.github/workflows/reusable-claude-review.yml).
