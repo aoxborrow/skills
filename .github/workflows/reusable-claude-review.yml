@@ -5,8 +5,12 @@ name: Claude review
 #
 # - A push reviews only the commits since the last review (a full review after
 #   a force-push); a commit that was already reviewed is skipped.
+# - Each review sets a `claude-review` commit status on the commit it
+#   covered, which is how the next run knows where to start. So a push review
+#   with no new findings posts nothing; the status is the only trace.
 # - A `/claude-review` comment asks for a full review of any PR, forks
-#   included. Text after the command goes to Claude as guidance.
+#   included. Text after the command goes to Claude as guidance. It always
+#   gets a reply, even with no findings.
 # - A repo can add `pr-review.md` (or `.github/pr-review.md`) saying what
 #   matters most in that project. It is read from the PR's base branch, so a
 #   PR can't change its own review rules.
@@ -15,7 +19,9 @@ name: Claude review
 # - `review` runs Claude with a read-only token and only Read, Grep and Glob.
 #   It returns findings as structured output; it can't post anything.
 # - `publish` (no model) posts them as one PR review: inline findings plus a
-#   body with the summary and what was ruled out.
+#   body with the summary and what was ruled out. Then it sets the status.
+#
+# The caller grants `statuses: write` on top of the permissions in this file.
 #
 # Claude signs in through Anthropic workload identity federation (no stored
 # API key), using four ANTHROPIC_* variables set in the calling repo.
@@ -39,6 +45,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      statuses: read # finds the last reviewed commit
       id-token: write # the GitHub token traded for an Anthropic one
     outputs:
       mode: ${{ steps.scope.outputs.mode }}
@@ -78,9 +85,11 @@ jobs:
           git fetch --depth=50 origin "pull/$PR/head:pr-head"
           echo "head=$(git rev-parse pr-head)" >> "$GITHUB_OUTPUT"
 
-      # Our reviews are the ones by github-actions[bot] carrying the marker;
-      # each records the commit it covered in `commit_id`. A contributor
-      # can't post as that bot, so they can't fake one.
+      # The last reviewed commit is the newest PR commit with a
+      # `claude-review` status set by github-actions (GraphQL drops the
+      # `[bot]`). A contributor can't act as that bot, so they can't fake one.
+      # PRs last reviewed before statuses fall back to our newest marked
+      # review, which records the commit it covered in `commit_id`.
       - name: Decide what to review
         id: scope
         env:
@@ -90,8 +99,17 @@ jobs:
         run: |
           export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
           export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-          prior=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
-            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- claude-review -->"))) | .commit_id' | tail -n1)
+          prior=$(gh api graphql -f owner="${REPO%/*}" -f name="${REPO#*/}" -F pr="$PR" -f query='
+            query($owner: String!, $name: String!, $pr: Int!) {
+              repository(owner: $owner, name: $name) { pullRequest(number: $pr) {
+                commits(last: 100) { nodes { commit { oid status { context(name: "claude-review") { creator { login } } } } } }
+              } }
+            }' --jq '[.data.repository.pullRequest.commits.nodes[].commit
+              | select(.status.context.creator.login | IN("github-actions", "github-actions[bot]")) | .oid] | last // empty')
+          if [ -z "$prior" ]; then
+            prior=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+              --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- claude-review -->"))) | .commit_id' | tail -n1)
+          fi
           mode=full
           if [ "$EVENT" = issue_comment ]; then
             mode=full # an explicit request always gets a full review
@@ -213,6 +231,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       pull-requests: write
+      statuses: write # records the reviewed commit
     steps:
       - name: Post the review
         env:
@@ -220,6 +239,7 @@ jobs:
           RESULT: ${{ needs.review.outputs.result }}
           HEAD: ${{ needs.review.outputs.head }}
           MODE: ${{ needs.review.outputs.mode }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           [ -n "$RESULT" ] || { echo "Claude returned no result"; exit 1; }
@@ -263,6 +283,24 @@ jobs:
                 )
               }' result.json > review.json
 
+          # Set only once anything worth posting is up, so a failed post gets
+          # a retry on the next push.
+          n=$(jq '.new | length' review.json)
+          mark_reviewed() {
+            gh api --method POST "repos/$REPO/statuses/$HEAD" --silent \
+              -f state=success -f context=claude-review \
+              -f description="$(if [ "$n" -eq 0 ]; then echo "No new findings"; elif [ "$n" -eq 1 ]; then echo "1 new finding"; else echo "$n new findings"; fi)" \
+              -f target_url="$GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID"
+          }
+
+          # Nothing new to say on a push: stay quiet. An explicit
+          # `/claude-review` still gets an answer.
+          if [ "$n" -eq 0 ] && [ "$EVENT" != issue_comment ]; then
+            echo "No new findings; not posting a review."
+            mark_reviewed
+            exit 0
+          fi
+
           # Appended last in both paths below, so model text can't displace it.
           footer=$'\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- claude-review -->'
 
@@ -279,6 +317,7 @@ jobs:
               + ([.new[] | "### \(.title)\n`\(.path):\(.line)`\n\n\(.body)\n\n<!-- \(.fp) -->"] | join("\n\n"))' review.json)$footer"
             payload "$full" '[]' | gh api --method POST "repos/$REPO/pulls/$PR/reviews" --input - --silent
           fi
+          mark_reviewed
 
   acknowledge:
     if: github.event_name == 'issue_comment'
