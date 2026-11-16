@@ -99,7 +99,7 @@ jobs:
         run: |
           export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
           export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-          prior=$(gh api graphql -F owner="${REPO%/*}" -F name="${REPO#*/}" -F pr="$PR" -f query='
+          prior=$(gh api graphql -f owner="${REPO%/*}" -f name="${REPO#*/}" -F pr="$PR" -f query='
             query($owner: String!, $name: String!, $pr: Int!) {
               repository(owner: $owner, name: $name) { pullRequest(number: $pr) {
                 commits(last: 100) { nodes { commit { oid status { context(name: "claude-review") { creator { login } } } } } }
