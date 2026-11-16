@@ -5,8 +5,12 @@ name: Claude review
 #
 # - A push reviews only the commits since the last review (a full review after
 #   a force-push); a commit that was already reviewed is skipped.
+# - A push review with no new findings posts nothing. The next push then
+#   reviews everything since the last posted review; findings already posted
+#   are not repeated.
 # - A `/claude-review` comment asks for a full review of any PR, forks
-#   included. Text after the command goes to Claude as guidance.
+#   included. Text after the command goes to Claude as guidance. It always
+#   gets a reply, even with no findings.
 # - A repo can add `pr-review.md` (or `.github/pr-review.md`) saying what
 #   matters most in that project. It is read from the PR's base branch, so a
 #   PR can't change its own review rules.
@@ -220,6 +224,7 @@ jobs:
           RESULT: ${{ needs.review.outputs.result }}
           HEAD: ${{ needs.review.outputs.head }}
           MODE: ${{ needs.review.outputs.mode }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           [ -n "$RESULT" ] || { echo "Claude returned no result"; exit 1; }
@@ -262,6 +267,13 @@ jobs:
                   + (if (.ruled_out | length) > 0 then "\n\n<details><summary>Checked and ruled out</summary>\n\n" + (.ruled_out | map("- " + .) | join("\n")) + "\n\n</details>" else "" end)
                 )
               }' result.json > review.json
+
+          # Nothing new to say on a push: stay quiet. An explicit
+          # `/claude-review` still gets an answer.
+          if [ "$(jq '.new | length' review.json)" -eq 0 ] && [ "$EVENT" != issue_comment ]; then
+            echo "No new findings; not posting a review."
+            exit 0
+          fi
 
           # Appended last in both paths below, so model text can't displace it.
           footer=$'\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- claude-review -->'
