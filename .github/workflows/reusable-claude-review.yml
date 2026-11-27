@@ -23,14 +23,21 @@ name: Claude review
 #
 # The caller grants `statuses: write` on top of the permissions in this file.
 #
-# Claude signs in through Anthropic workload identity federation (no stored
-# API key), using four ANTHROPIC_* variables set in the calling repo.
+# Claude signs in one of two ways, set up in the calling repo:
+# - a Claude subscription: a `CLAUDE_CODE_OAUTH_TOKEN` secret (from
+#   `claude setup-token`) that the caller passes in, billed to the plan
+#   instead of API credits. It wins when set.
+# - Anthropic workload identity federation (no stored key), using four
+#   ANTHROPIC_* repository variables.
 #
 # PR code is never checked out or run. The workspace is the PR's base branch
 # (trusted), and the PR is laid out as plain files in `.pr-review/`.
 
 on:
   workflow_call:
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
 
 permissions: {}
 
@@ -164,18 +171,21 @@ jobs:
         if: steps.scope.outputs.mode != 'skip'
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
-          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
-          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
-          anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Federation only when no subscription token was passed in
+          anthropic_federation_rule_id: ${{ !secrets.CLAUDE_CODE_OAUTH_TOKEN && vars.ANTHROPIC_FEDERATION_RULE_ID || '' }}
+          anthropic_organization_id: ${{ !secrets.CLAUDE_CODE_OAUTH_TOKEN && vars.ANTHROPIC_ORGANIZATION_ID || '' }}
+          anthropic_service_account_id: ${{ !secrets.CLAUDE_CODE_OAUTH_TOKEN && vars.ANTHROPIC_SERVICE_ACCOUNT_ID || '' }}
+          anthropic_workspace_id: ${{ !secrets.CLAUDE_CODE_OAUTH_TOKEN && vars.ANTHROPIC_WORKSPACE_ID || '' }}
           github_token: ${{ github.token }} # read-only in this job
           # The caller's `if` already decides who may trigger a review. Setting
           # this makes the action use a credential helper instead of writing
           # the token into .git/config, and isolates subprocesses.
           allowed_non_write_users: "*"
           # The action keeps the federation token and its cached Anthropic
-          # credential under RUNNER_TEMP; keep Claude's file tools out of it,
-          # out of /proc, /tmp, home dotfiles and git metadata.
+          # credential under RUNNER_TEMP, and the subscription token is in the
+          # process environment; keep Claude's file tools out of RUNNER_TEMP,
+          # /proc, /tmp, home dotfiles and git metadata.
           settings: '{"permissions":{"deny":["Read(//home/runner/work/_temp/**)","Read(//home/runner/work/_actions/**)","Read(//proc/**)","Read(//sys/**)","Read(//tmp/**)","Read(//home/runner/.*)","Read(//home/runner/.*/**)","Read(//home/runner/work/**/.git/**)"]}}'
           prompt: |
             You are an adversarial reviewer for PR #${{ env.PR }} in ${{ github.repository }}.
@@ -246,7 +256,8 @@ jobs:
           printf '%s' "$RESULT" > result.json
 
           # Refuse to post anything that looks like a credential.
-          # JWTs cover the GitHub OIDC token and federation credentials.
+          # JWTs cover the GitHub OIDC token and federation credentials;
+          # sk-ant- covers API keys and subscription (oat) tokens.
           if grep -Eq 'sk-ant-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|x-access-token:' result.json; then
             echo "The review contains something that looks like a credential; not posting it."
             exit 1

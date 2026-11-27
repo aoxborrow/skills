@@ -12,8 +12,9 @@ already catches.
   job may write. PR code must never be checked out as the workspace or run, and
   nothing from the PR may reach a `run:` script through `${{ }}`.
 - **Credentials stay out of the model's reach.** The federation token and its
-  cached credential live under `RUNNER_TEMP`; the `settings` deny rules keep
-  Claude's file tools out of it, `/proc` and `.git`, and `publish` refuses
+  cached credential live under `RUNNER_TEMP`, and the subscription token is in
+  the process environment; the `settings` deny rules keep Claude's file tools
+  out of `RUNNER_TEMP`, `/proc` and `.git`, and `publish` refuses
   anything credential-shaped. Check that new steps don't write secrets where
   Claude can read them.
 - **Every repo calls `reusable-claude-review.yml@main`.** A change here reaches
